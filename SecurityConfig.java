@@ -13,7 +13,7 @@ public class SecurityConfig {
     public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
         http
             // ...existing code...
-            .addFilterBefore(rateLimitingFilter(), SecurityWebFiltersOrder.AUTHENTICATION)
+            .addFilterBefore(rateLimitingWebFilter(), SecurityWebFiltersOrder.AUTHENTICATION)
             // ...existing code...
             .authorizeExchange()
             // ...existing code...
@@ -26,7 +26,7 @@ public class SecurityConfig {
     }
 
     @Bean
-    public WebFilter rateLimitingFilter() {
-        return new RateLimitingFilter();
+    public WebFilter rateLimitingWebFilter() {
+        return new RateLimitingWebFilter();
     }
 }
