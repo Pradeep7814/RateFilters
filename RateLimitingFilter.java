@@ -1,33 +1,22 @@
-import javax.servlet.Filter;
-import javax.servlet.FilterChain;
-import javax.servlet.FilterConfig;
-import javax.servlet.ServletException;
-import javax.servlet.ServletRequest;
-import javax.servlet.ServletResponse;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
+import org.springframework.web.server.WebFilter;
+import org.springframework.web.server.WebFilterChain;
+import org.springframework.web.server.ServerWebExchange;
+import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
+
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
-public class RateLimitingFilter implements Filter {
+@Component
+public class RateLimitingWebFilter implements WebFilter {
 
     private final ConcurrentHashMap<String, Long> requestCounts = new ConcurrentHashMap<>();
     private final long THRESHOLD = 100; // Max requests per minute
     private final long TIME_WINDOW = TimeUnit.MINUTES.toMillis(1);
 
     @Override
-    public void init(FilterConfig filterConfig) throws ServletException {
-        // Initialization code if needed
-    }
-
-    @Override
-    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
-            throws IOException, ServletException {
-        HttpServletRequest httpRequest = (HttpServletRequest) request;
-        HttpServletResponse httpResponse = (HttpServletResponse) response;
-
-        String clientIp = httpRequest.getRemoteAddr();
+    public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
+        String clientIp = exchange.getRequest().getRemoteAddress().getAddress().getHostAddress();
         long currentTime = System.currentTimeMillis();
 
         requestCounts.merge(clientIp, currentTime, (oldTime, newTime) -> {
@@ -43,15 +32,10 @@ public class RateLimitingFilter implements Filter {
                 .count();
 
         if (requestCount > THRESHOLD) {
-            httpResponse.setStatus(HttpServletResponse.SC_TOO_MANY_REQUESTS);
-            return;
+            exchange.getResponse().setStatusCode(HttpStatus.TOO_MANY_REQUESTS);
+            return Mono.empty();
         }
 
-        chain.doFilter(request, response);
-    }
-
-    @Override
-    public void destroy() {
-        // Cleanup code if needed
+        return chain.filter(exchange);
     }
 }
