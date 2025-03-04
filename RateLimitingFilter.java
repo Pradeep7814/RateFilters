@@ -1,39 +1,34 @@
+import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
-import org.springframework.web.server.ServerWebExchange;
-import org.springframework.stereotype.Component;
+import org.springframework.http.HttpStatus;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
-@Component
-public class RateLimitingWebFilter implements WebFilter {
-
-    private final ConcurrentHashMap<String, Long> requestCounts = new ConcurrentHashMap<>();
-    private final long THRESHOLD = 100; // Max requests per minute
-    private final long TIME_WINDOW = TimeUnit.MINUTES.toMillis(1);
+public class RateLimitingFilter implements WebFilter {
+    private static final int MAX_REQUESTS_PER_MINUTE = 60;
+    private final ConcurrentHashMap<String, AtomicInteger> requestCounts = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> timestamps = new ConcurrentHashMap<>();
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         String clientIp = exchange.getRequest().getRemoteAddress().getAddress().getHostAddress();
         long currentTime = System.currentTimeMillis();
 
-        requestCounts.merge(clientIp, currentTime, (oldTime, newTime) -> {
-            if (newTime - oldTime > TIME_WINDOW) {
-                return newTime;
-            } else {
-                return oldTime;
-            }
-        });
+        requestCounts.putIfAbsent(clientIp, new AtomicInteger(0));
+        timestamps.putIfAbsent(clientIp, currentTime);
 
-        long requestCount = requestCounts.values().stream()
-                .filter(time -> currentTime - time <= TIME_WINDOW)
-                .count();
+        if (currentTime - timestamps.get(clientIp) > Duration.ofMinutes(1).toMillis()) {
+            requestCounts.get(clientIp).set(0);
+            timestamps.put(clientIp, currentTime);
+        }
 
-        if (requestCount > THRESHOLD) {
+        if (requestCounts.get(clientIp).incrementAndGet() > MAX_REQUESTS_PER_MINUTE) {
             exchange.getResponse().setStatusCode(HttpStatus.TOO_MANY_REQUESTS);
-            return Mono.empty();
+            return exchange.getResponse().setComplete();
         }
 
         return chain.filter(exchange);
