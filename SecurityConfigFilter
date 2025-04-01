@@ -1,37 +1,28 @@
-package com.example.config;
-
-import com.example.rateLimiter.RateLimiter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
-
 @Configuration
 public class SecurityConfig {
 
-    private final RateLimiter rateLimiter = new RateLimiter(150, 60000); // 150 requests per minute
-
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        http.addFilterBefore((request, response, chain) -> {
-            if (!rateLimiter.allowRequest()) {
-                response.setStatus(HttpServletResponse.SC_TOO_MANY_REQUESTS);
-                response.getWriter().write("Rate limit exceeded. Try again later.");
-                return;
-            }
-            chain.doFilter(request, response);
-        }, UsernamePasswordAuthenticationFilter.class);
-
-        http.authorizeHttpRequests()
-            .anyRequest().permitAll(); // Adjust as per your security requirements
-
+        http
+            // Add the RateLimitingFilter before the authentication filter
+            .addFilterBefore(rateLimitingFilter(), UsernamePasswordAuthenticationFilter.class)
+            .authorizeRequests()
+            .anyRequest().authenticated()
+            .and()
+            .httpBasic()
+            .and()
+            .formLogin();
         return http.build();
+    }
+
+    @Bean
+    public RateLimitingFilter rateLimitingFilter() {
+        return new RateLimitingFilter();
     }
 }
