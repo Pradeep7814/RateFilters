@@ -1,55 +1,42 @@
-import javax.servlet.Filter;
-import javax.servlet.FilterChain;
-import javax.servlet.FilterConfig;
-import javax.servlet.ServletException;
-import javax.servlet.ServletRequest;
-import javax.servlet.ServletResponse;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.context.request.NativeWebRequest;
+import org.springframework.web.servlet.HandlerInterceptor;
+
 import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class RateLimitingFilter implements Filter {
+@Component
+public class RateLimitingInterceptor implements HandlerInterceptor {
     private static final int MAX_REQUESTS_PER_MINUTE = 60;
     private final ConcurrentHashMap<String, AtomicInteger> requestCounts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> timestamps = new ConcurrentHashMap<>();
 
     @Override
-    public void init(FilterConfig filterConfig) throws ServletException {
-        // Initialization logic if needed
-    }
-
-    @Override
-    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
-            throws IOException, ServletException {
-        if (request instanceof HttpServletRequest && response instanceof HttpServletResponse) {
-            HttpServletRequest httpRequest = (HttpServletRequest) request;
-            HttpServletResponse httpResponse = (HttpServletResponse) response;
-
-            String clientIp = httpRequest.getRemoteAddr();
-            long currentTime = System.currentTimeMillis();
-
-            requestCounts.putIfAbsent(clientIp, new AtomicInteger(0));
-            timestamps.putIfAbsent(clientIp, currentTime);
-
-            if (currentTime - timestamps.get(clientIp) > Duration.ofMinutes(1).toMillis()) {
-                requestCounts.get(clientIp).set(0);
-                timestamps.put(clientIp, currentTime);
-            }
-
-            if (requestCounts.get(clientIp).incrementAndGet() > MAX_REQUESTS_PER_MINUTE) {
-                httpResponse.setStatus(HttpServletResponse.SC_TOO_MANY_REQUESTS);
-                return;
-            }
+    public boolean preHandle(WebRequest request, NativeWebRequest nativeRequest, Object handler) throws Exception {
+        String clientIp = nativeRequest.getHeader("X-Forwarded-For");
+        if (clientIp == null || clientIp.isEmpty()) {
+            clientIp = nativeRequest.getNativeRequest(javax.servlet.http.HttpServletRequest.class).getRemoteAddr();
         }
 
-        chain.doFilter(request, response);
-    }
+        long currentTime = System.currentTimeMillis();
 
-    @Override
-    public void destroy() {
-        // Cleanup logic if needed
+        requestCounts.putIfAbsent(clientIp, new AtomicInteger(0));
+        timestamps.putIfAbsent(clientIp, currentTime);
+
+        if (currentTime - timestamps.get(clientIp) > Duration.ofMinutes(1).toMillis()) {
+            requestCounts.get(clientIp).set(0);
+            timestamps.put(clientIp, currentTime);
+        }
+
+        if (requestCounts.get(clientIp).incrementAndGet() > MAX_REQUESTS_PER_MINUTE) {
+            nativeRequest.getNativeResponse(javax.servlet.http.HttpServletResponse.class)
+                    .setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
+            return false; // Reject the request
+        }
+
+        return true; // Allow the request
     }
 }
