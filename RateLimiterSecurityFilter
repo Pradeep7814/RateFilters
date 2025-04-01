@@ -1,0 +1,31 @@
+package com.example.rateLimiter;
+
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class RateLimiter {
+    private final int maxRequests;
+    private final long timeWindowMillis;
+    private Instant windowStart;
+    private final AtomicInteger requestCount;
+
+    public RateLimiter(int maxRequests, long timeWindowMillis) {
+        this.maxRequests = maxRequests;
+        this.timeWindowMillis = timeWindowMillis;
+        this.windowStart = Instant.now();
+        this.requestCount = new AtomicInteger(0);
+    }
+
+    public synchronized boolean allowRequest() {
+        Instant now = Instant.now();
+        if (now.isAfter(windowStart.plusMillis(timeWindowMillis))) {
+            windowStart = now;
+            requestCount.set(0);
+        }
+        if (requestCount.incrementAndGet() <= maxRequests) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+}
