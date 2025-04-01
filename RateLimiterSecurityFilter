@@ -1,42 +1,64 @@
-import org.springframework.http.HttpStatus;
-import org.springframework.stereotype.Component;
-import org.springframework.web.context.request.WebRequest;
-import org.springframework.web.context.request.NativeWebRequest;
-import org.springframework.web.servlet.HandlerInterceptor;
+package com.example.filter;
 
-import java.time.Duration;
+import jakarta.servlet.Filter;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.stereotype.Component;
+
+import java.io.IOException;
+import java.time.Instant;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
-public class RateLimitingInterceptor implements HandlerInterceptor {
-    private static final int MAX_REQUESTS_PER_MINUTE = 60;
-    private final ConcurrentHashMap<String, AtomicInteger> requestCounts = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Long> timestamps = new ConcurrentHashMap<>();
+public class RateLimitingFilter implements Filter {
+
+    private static final int MAX_REQUESTS = 150;
+    private static final long TIME_WINDOW_MS = 60 * 1000; // 1 minute
+
+    private final Map<String, ClientRequestInfo> clientRequestMap = new ConcurrentHashMap<>();
 
     @Override
-    public boolean preHandle(WebRequest request, NativeWebRequest nativeRequest, Object handler) throws Exception {
-        String clientIp = nativeRequest.getHeader("X-Forwarded-For");
-        if (clientIp == null || clientIp.isEmpty()) {
-            clientIp = nativeRequest.getNativeRequest(javax.servlet.http.HttpServletRequest.class).getRemoteAddr();
+    public void doFilter(jakarta.servlet.ServletRequest request, jakarta.servlet.ServletResponse response, FilterChain chain)
+            throws IOException, ServletException {
+
+        if (request instanceof HttpServletRequest && response instanceof HttpServletResponse) {
+            HttpServletRequest httpRequest = (HttpServletRequest) request;
+            HttpServletResponse httpResponse = (HttpServletResponse) response;
+
+            String clientIp = httpRequest.getRemoteAddr();
+            long currentTime = Instant.now().toEpochMilli();
+
+            clientRequestMap.compute(clientIp, (ip, clientRequestInfo) -> {
+                if (clientRequestInfo == null || currentTime - clientRequestInfo.startTime > TIME_WINDOW_MS) {
+                    return new ClientRequestInfo(currentTime, new AtomicInteger(1));
+                } else {
+                    clientRequestInfo.requestCount.incrementAndGet();
+                    return clientRequestInfo;
+                }
+            });
+
+            ClientRequestInfo clientRequestInfo = clientRequestMap.get(clientIp);
+            if (clientRequestInfo.requestCount.get() > MAX_REQUESTS) {
+                httpResponse.setStatus(HttpServletResponse.SC_TOO_MANY_REQUESTS);
+                httpResponse.getWriter().write("Rate limit exceeded. Try again later.");
+                return;
+            }
         }
 
-        long currentTime = System.currentTimeMillis();
+        chain.doFilter(request, response);
+    }
 
-        requestCounts.putIfAbsent(clientIp, new AtomicInteger(0));
-        timestamps.putIfAbsent(clientIp, currentTime);
+    private static class ClientRequestInfo {
+        private final long startTime;
+        private final AtomicInteger requestCount;
 
-        if (currentTime - timestamps.get(clientIp) > Duration.ofMinutes(1).toMillis()) {
-            requestCounts.get(clientIp).set(0);
-            timestamps.put(clientIp, currentTime);
+        public ClientRequestInfo(long startTime, AtomicInteger requestCount) {
+            this.startTime = startTime;
+            this.requestCount = requestCount;
         }
-
-        if (requestCounts.get(clientIp).incrementAndGet() > MAX_REQUESTS_PER_MINUTE) {
-            nativeRequest.getNativeResponse(javax.servlet.http.HttpServletResponse.class)
-                    .setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
-            return false; // Reject the request
-        }
-
-        return true; // Allow the request
     }
 }
